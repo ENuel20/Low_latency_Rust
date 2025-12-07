@@ -1,0 +1,6 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `/home/user_nuel21/learningrust/minigrep/target/debug/minigrep`
+
+thread 'main' panicked at src/main.rs:53:13:
+requires two arguments
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
