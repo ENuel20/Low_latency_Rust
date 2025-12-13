@@ -1,7 +1,7 @@
 fn main() {
     let s = String::from("hello");
     take_ownership(&s);
-    println!("{}",s);
+    println!("{:?}",s);
     let x = 8;
     let x = take_copy(x);
     println!("Y = {},{}", x, x );

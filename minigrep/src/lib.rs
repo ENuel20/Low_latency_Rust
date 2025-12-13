@@ -21,10 +21,9 @@ pub fn search_case_insensitive<'a>(query: &str, contents: &'a str) -> Vec<&'a st
     results
 }
 
-
 #[cfg(test)]
 
-mod tests{
+mod tests {
     use super::*;
 
     #[test]
@@ -36,8 +35,8 @@ safe, fast, productive
 pick three.
 Duct tape";
         assert_eq!(vec!["safe, fast, productive"], search(query, contents));
-}
-    
+    }
+
     #[test]
     fn case_insensitive() {
         let query = "rUsT";
@@ -47,6 +46,9 @@ safe, fast, productive
 pick three.
 Trust me.";
 
-        assert_eq!(vec!["Rust:", "Trust me."], search_case_insensitive(query, contents));
+        assert_eq!(
+            vec!["Rust:", "Trust me."],
+            search_case_insensitive(query, contents)
+        );
     }
 }
