@@ -130,8 +130,11 @@ impl<T:Debug> Deque <T> {
             self.begin = memory.deref(begin_ref).next;
             memory.dealloc(begin_ref);
 
-            if self.end.is_none() {
-                self.begin = None;
+            if let Some(begin_idx) = self.begin{
+                memory.deref_mut(begin_idx).prev = None;
+            }
+            else{
+                self.end = None;
             }
         }
     }
@@ -141,10 +144,12 @@ impl<T:Debug> Deque <T> {
             self.end = memory.deref(end_ref).prev;
             memory.dealloc(end_ref);
 
-            if self.begin.is_none() {
-                self.end = None;
+            if let Some(end_idx) = self.end {
+                memory.deref_mut(end_idx).prev = None;
             }
-
+            else{
+                self.begin = None;
+            }
         }
     }
 
