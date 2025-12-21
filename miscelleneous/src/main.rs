@@ -1,22 +1,15 @@
 fn main() {
-    let s = String::from("hello");
-    take_ownership(&s);
-    println!("{:?}",s);
-    let x = 8;
-    let x = take_copy(x);
-    println!("Y = {},{}", x, x );
+    let mut data = vec![1,2,3];
+
+    let mut add = move || {
+        &data.push(4);
+        println!("{:?}",data);
+
+    };
+
+    add();
+
+    println!("{:?}", data);
 }
 
-
-
-fn take_ownership( u: &str ) -> usize {
-    let y = u.len();
-    y
-}
-
-fn take_copy(mut x: u8) -> u8 {
-    let y = 5;
-    x = y + x;
-    x
-}
 
