@@ -1,3 +1,4 @@
+use std::cell::UnsafeCell;
 use std::ops::Deref;
 use std::ptr::NonNull;
 use std::sync::atomic::fence;
@@ -6,7 +7,7 @@ use std::sync::atomic::Ordering::Acquire;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::atomic::Ordering::Release;
 use std::thread;
-use std::cell::UnsafeCell;
+use std::mem::ManuallyDrop;
 
 struct ArcData<T> {
     data_ref_count: AtomicUsize,
@@ -21,7 +22,7 @@ unsafe impl<T: Send + Sync> Send for Weak<T> {}
 unsafe impl<T: Send + Sync> Sync for Weak<T> {}
 
 pub struct Arc<T> {
-    Arc: NonNull<ArcData<T>>,
+    ptr: NonNull<ArcData<T>>,
 }
 
 unsafe impl<T: Send + Sync> Send for Arc<T> {}
@@ -30,11 +31,11 @@ unsafe impl<T: Send + Sync> Sync for Arc<T> {}
 impl<T> Arc<T> {
     pub fn new(data: T) -> Arc<T> {
         Arc {
-                ptr: NonNull::from(Box::leak(Box::new(ArcData {
-                    data_ref_count: AtomicUsize::new(1),
-                    alloc_ref_count: AtomicUsize::new(1),
-                    data : UnsafeCell::new(ManuallyDrop::new(data))
-                }))),
+            ptr: NonNull::from(Box::leak(Box::new(ArcData {
+                data_ref_count: AtomicUsize::new(1),
+                alloc_ref_count: AtomicUsize::new(1),
+                data: UnsafeCell::new(ManuallyDrop::new(data)),
+            }))),
         }
     }
 
@@ -46,7 +47,12 @@ impl<T> Arc<T> {
         // Acquire matches Weak::drop's Release decrement, to make sure any
         // upgraded pointers are visible in the next data_ref_count.load
 
-        if arc.data().alloc_ref_count.compare_excange(1, usize::MAX, Acquire, Relaxed).is_err() {
+        if arc
+            .data()
+            .alloc_ref_count
+            .compare_exchange(1, usize::MAX, Acquire, Relaxed)
+            .is_err()
+        {
             return None;
         }
         let is_unique = arc.data().data_ref_count.load(Relaxed) == 1;
@@ -54,17 +60,31 @@ impl<T> Arc<T> {
         // changes to the data_ref_count that come after `downgrade` don't
         // change the is_unique result above.
         arc.data().alloc_ref_count.store(1, Release);
-        if !is_unique{
-            return None
+        if !is_unique {
+            return None;
         }
         // Acquire to match Arc::drop's Release decrement, to make sure nothing
         // else is accessing the data.
         fence(Acquire);
-        unsafe {Some(&mut *arc.data().data.get())}
+        unsafe { Some(&mut *arc.data().data.get()) }
     }
 
     pub fn downgrade(arc: &Self) -> Weak<T> {
-        arc.weak.clone()
+        let mut  n = arc.data().alloc_ref_count.load(Relaxed);
+        loop {
+            if n == usize::MAX {
+                std::hint::spin_loop();
+                n = arc.data().alloc_ref_count.load(Relaxed);
+                continue;
+            }
+            assert!(n < usize::MAX - 1);
+            // Acquire synchronises with get_mut's release-store.
+            if let Err(e) = arc.data().alloc_ref_count.compare_exchange(n, n+1, Acquire, Relaxed){
+                    n = e;
+                    continue;
+            }
+            return Weak{ptr : arc.ptr}
+        }
     }
 }
 
@@ -73,23 +93,24 @@ impl<T> Weak<T> {
         unsafe { self.ptr.as_ref() }
     }
 
-    pub fn upgrade(&self) -> Option<Arc<T>>{
+    pub fn upgrade(&self) -> Option<Arc<T>> {
         let mut n = self.data().data_ref_count.load(Relaxed);
-        loop{
+        loop {
             if n == 0 {
-                return None
+                return None;
             }
 
-            if let Err(e) =
-                self.data().data_ref_count.compare_exchange(n, n+1, Relaxed,Relaxed)
+            if let Err(e) = self
+                .data()
+                .data_ref_count
+                .compare_exchange(n, n + 1, Relaxed, Relaxed)
             {
-                n=e;
-                continue
+                n = e;
+                continue;
             }
-            return Some(Arc{ ptr : self.ptr });
+            return Some(Arc { ptr: self.ptr });
         }
     }
-
 }
 
 impl<T> Clone for Weak<T> {
@@ -104,10 +125,10 @@ impl<T> Clone for Weak<T> {
 
 impl<T> Clone for Arc<T> {
     fn clone(&self) -> Self {
-        if selt.data().data_ref_count.fetch_add(1, Relaxed) >= usize::MAX / 2 {
+        if self.data().data_ref_count.fetch_add(1, Relaxed) >= usize::MAX / 2 {
             std::process::abort();
         }
-        Arc { ptr : self.ptr }
+        Arc { ptr: self.ptr }
     }
 }
 
@@ -128,10 +149,10 @@ impl<T> Drop for Arc<T> {
             fence(Acquire);
             // Safety: The data reference counter is zero,
             // so nothing will access the data anymore.
-            unsafe { ManuallyDrop::drop(&mut *self.data().data.get())}
+            unsafe { ManuallyDrop::drop(&mut *self.data().data.get()) }
             // Now that there's no `Arc<T>`s left,
             // drop the implicit weak pointer that represented all `Arc<T>`s.
-            drop(Weak{ptr: self.ptr})
+            drop(Weak { ptr: self.ptr })
         }
     }
 }
@@ -149,13 +170,12 @@ impl<T> Deref for Arc<T> {
 #[test]
 
 fn test() {
-
-    static NUM_DROPS :AtomicUsize = AtomicUsize::new(0);
+    static NUM_DROPS: AtomicUsize = AtomicUsize::new(0);
 
     struct DetectDrop;
-    
+
     impl Drop for DetectDrop {
-        fn drop(&self){
+        fn drop(&self) {
             NUM_DROPS.fetch_add(1, Relaxed);
         }
     }
@@ -168,7 +188,7 @@ fn test() {
         let y = y.upgrade().unwrap();
         assert_eq!(y.0, "Hello");
     });
-    
+
     assert_eq!(x.0, "Hello");
     t.join().unwrap();
 
@@ -179,5 +199,4 @@ fn test() {
 
     assert_eq!(NUM_DROPS.load(Relaxed), 1);
     assert!(z.upgrade().is_none());
-    
 }
